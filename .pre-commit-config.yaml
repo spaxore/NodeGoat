@@ -1,0 +1,25 @@
+# Shift-left security: these hooks run on every `git commit`.
+# If a hook fails, the commit is blocked until the issue is fixed.
+repos:
+  - repo: local
+    hooks:
+      # Secret scan: looks for passwords, API keys and private keys
+      # in the changes that are staged for this commit.
+      - id: gitleaks
+        name: Gitleaks (secret scan on staged changes)
+        language: docker_image
+        entry: zricethezav/gitleaks:latest protect --staged --redact --verbose
+        pass_filenames: false
+
+      # SAST: scans the staged .js files for insecure code patterns (injection, XSS, eval...).
+      # --error makes Semgrep exit with a failure when it finds something.
+      # Only the files in the commit are scanned, so a developer is blocked only for code they touch.
+      - id: semgrep
+        name: Semgrep (SAST)
+        language: docker_image
+        entry: semgrep/semgrep semgrep --config p/javascript --error
+        files: \.js$
+        # Third-party minified libraries are not our code and make Semgrep time out.
+        exclude: ^app/assets/vendor/
+        # One Semgrep run per commit instead of one per batch of files.
+        require_serial: true
