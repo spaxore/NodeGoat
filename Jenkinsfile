@@ -12,9 +12,10 @@ pipeline {
 
     environment {
         IMAGE = "nodegoat-web:${env.BUILD_NUMBER}"
-        NET   = "nodegoat-ci-${env.BUILD_NUMBER}"
-        MONGO = "nodegoat-mongo-${env.BUILD_NUMBER}"
-        WEB   = "nodegoat-web-${env.BUILD_NUMBER}"
+        // The ci- prefix keeps these names from clashing with containers started by hand or by docker compose.
+        NET   = "ci-net-${env.BUILD_NUMBER}"
+        MONGO = "ci-mongo-${env.BUILD_NUMBER}"
+        WEB   = "ci-web-${env.BUILD_NUMBER}"
     }
 
     stages {
