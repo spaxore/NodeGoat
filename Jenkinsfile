@@ -25,6 +25,20 @@ pipeline {
             }
         }
 
+        // Looks for passwords, keys and tokens in the working tree and in the whole git history.
+        // The scanner runs as a throwaway container; --volumes-from jenkins gives it the checked-out workspace.
+        // It only reports for now (--exit-code 0): blocking thresholds come later with the quality gate.
+        stage('secrets_scan') {
+            steps {
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -w "$WORKSPACE" zricethezav/gitleaks:latest \
+                        detect --source . --redact --exit-code 0 \
+                        --report-format json --report-path reports/gitleaks.json
+                '''
+            }
+        }
+
         stage('Build image') {
             steps {
                 sh 'docker build -t "$IMAGE" .'
@@ -60,6 +74,7 @@ pipeline {
 
     post {
         always {
+            archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
             sh '''
                 docker rm -f "$WEB" "$MONGO" || true
                 docker network rm "$NET" || true
