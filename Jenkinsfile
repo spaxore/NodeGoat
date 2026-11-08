@@ -39,6 +39,23 @@ pipeline {
             }
         }
 
+        // Static analysis (SAST): reads the JavaScript source for dangerous patterns without running the app.
+        // Third-party libraries under app/assets/vendor are not our code, so they are skipped.
+        // The Semgrep image refuses to run unless the code is mounted at /src, so /src is made to point at the workspace.
+        // Like the secrets scan, it only reports for now.
+        stage('sast') {
+            steps {
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -e WS="$WORKSPACE" --entrypoint sh semgrep/semgrep -c '
+                        ln -s "$WS" /src && cd "$WS" &&
+                        semgrep --config p/javascript --exclude app/assets/vendor --metrics=off \
+                            --json --output reports/semgrep.json .
+                    '
+                '''
+            }
+        }
+
         stage('Build image') {
             steps {
                 sh 'docker build -t "$IMAGE" .'
