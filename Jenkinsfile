@@ -69,15 +69,22 @@ pipeline {
         // Software composition analysis (SCA): checks every npm package version in package-lock.json
         // against a database of known vulnerabilities (CVEs). Needs no build, only the dependency list.
         // The trivy-cache volume keeps the vulnerability database between runs, so it is downloaded only once.
-        // Like the other scans, it only reports for now.
+        // QUALITY GATE, two passes: pass 1 saves every HIGH and CRITICAL finding to the report and never fails;
+        // pass 2 is the gate, it looks only at CRITICAL vulnerabilities that already have a fixed version
+        // (--ignore-unfixed) and exits 1 if there is one. HIGH findings, and critical ones nobody has fixed yet, only warn.
         stage('scan_dependencies') {
             steps {
-                sh '''
-                    mkdir -p reports
-                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
-                        fs --skip-version-check --scanners vuln --severity HIGH,CRITICAL --exit-code 0 \
-                        --format json --output reports/trivy-deps.json .
-                '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        mkdir -p reports
+                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                            fs --skip-version-check --scanners vuln --severity HIGH,CRITICAL --exit-code 0 \
+                            --format json --output reports/trivy-deps.json .
+                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                            fs --skip-version-check --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+                            --format table .
+                    '''
+                }
             }
         }
 
