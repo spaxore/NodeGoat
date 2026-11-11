@@ -151,15 +151,27 @@ pipeline {
         // It reuses the app and network started by the Smoke test, so it must stay after that stage.
         // -m 1 limits the crawl to one minute and -I keeps warnings from failing the build (report only for now).
         // The ZAP container is not removed on exit so the reports can be copied out; the post block cleans it up.
+        // QUALITY GATE: after the scan, the JSON report is searched for alerts of risk code 3 (High). Any one of them
+        // fails the stage. Medium, Low and Informational alerts stay in the report and only warn.
         stage('dast') {
             steps {
-                sh '''
-                    mkdir -p reports
-                    docker run --name "$ZAP" --network "$NET" --entrypoint sh zaproxy/zap-stable -c \
-                        "mkdir -p /zap/wrk && zap-baseline.py -t http://$WEB:4000 -m 1 -r zap.html -J zap.json -I"
-                    docker cp "$ZAP:/zap/wrk/zap.json" reports/zap.json
-                    docker cp "$ZAP:/zap/wrk/zap.html" reports/zap.html
-                '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        mkdir -p reports
+                        docker run --name "$ZAP" --network "$NET" --entrypoint sh zaproxy/zap-stable -c \
+                            "mkdir -p /zap/wrk && zap-baseline.py -t http://$WEB:4000 -m 1 -r zap.html -J zap.json -I"
+                        docker cp "$ZAP:/zap/wrk/zap.json" reports/zap.json
+                        docker cp "$ZAP:/zap/wrk/zap.html" reports/zap.html
+
+                        highs=$(grep -o '"riskcode": *"3"' reports/zap.json | wc -l)
+                        echo "ZAP high-risk alerts: $highs"
+                        if [ "$highs" -gt 0 ]; then
+                            echo "Blocking alerts:"
+                            grep -B1 '"riskcode": *"3"' reports/zap.json | grep '"name"'
+                            exit 1
+                        fi
+                    '''
+                }
             }
         }
     }
