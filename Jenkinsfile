@@ -96,15 +96,28 @@ pipeline {
 
         // Image scan: checks the finished image (operating system packages, npm packages and secrets baked in),
         // so it must run after the image is built. Jenkins' docker.sock is shared through --volumes-from,
-        // which is how Trivy reads the image from the Docker host. Like the other scans, it only reports for now.
+        // which is how Trivy reads the image from the Docker host.
+        // QUALITY GATE, three passes: pass 1 saves the full report and never fails; pass 2 blocks on CRITICAL
+        // vulnerabilities that already have a fix; pass 3 blocks on ANY secret in the image, at every severity,
+        // because Trivy rates a leaked private key as HIGH and the severity filter of pass 2 would let it through.
         stage('docker_scan') {
             steps {
-                sh '''
-                    mkdir -p reports
-                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
-                        image --skip-version-check --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 0 \
-                        --format json --output reports/trivy-image.json "$IMAGE"
-                '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        mkdir -p reports
+                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                            image --skip-version-check --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 0 \
+                            --format json --output reports/trivy-image.json "$IMAGE"
+                        gate=0
+                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                            image --skip-version-check --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+                            --format table "$IMAGE" || gate=1
+                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                            image --skip-version-check --scanners secret --exit-code 1 \
+                            --format table "$IMAGE" || gate=1
+                        exit $gate
+                    '''
+                }
             }
         }
 
