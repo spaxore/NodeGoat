@@ -77,6 +77,20 @@ pipeline {
             }
         }
 
+        // Image scan: checks the finished image (operating system packages, npm packages and secrets baked in),
+        // so it must run after the image is built. Jenkins' docker.sock is shared through --volumes-from,
+        // which is how Trivy reads the image from the Docker host. Like the other scans, it only reports for now.
+        stage('docker_scan') {
+            steps {
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                        image --skip-version-check --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 0 \
+                        --format json --output reports/trivy-image.json "$IMAGE"
+                '''
+            }
+        }
+
         // Starts MongoDB and the app on a private network, then waits for the login page to answer.
         stage('Smoke test') {
             steps {
