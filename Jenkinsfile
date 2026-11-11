@@ -16,6 +16,7 @@ pipeline {
         NET   = "ci-net-${env.BUILD_NUMBER}"
         MONGO = "ci-mongo-${env.BUILD_NUMBER}"
         WEB   = "ci-web-${env.BUILD_NUMBER}"
+        ZAP   = "ci-zap-${env.BUILD_NUMBER}"
     }
 
     stages {
@@ -116,13 +117,29 @@ pipeline {
                 '''
             }
         }
+
+        // Dynamic analysis (DAST): OWASP ZAP attacks the running app from outside, like a real attacker.
+        // It reuses the app and network started by the Smoke test, so it must stay after that stage.
+        // -m 1 limits the crawl to one minute and -I keeps warnings from failing the build (report only for now).
+        // The ZAP container is not removed on exit so the reports can be copied out; the post block cleans it up.
+        stage('dast') {
+            steps {
+                sh '''
+                    mkdir -p reports
+                    docker run --name "$ZAP" --network "$NET" --entrypoint sh zaproxy/zap-stable -c \
+                        "mkdir -p /zap/wrk && zap-baseline.py -t http://$WEB:4000 -m 1 -r zap.html -J zap.json -I"
+                    docker cp "$ZAP:/zap/wrk/zap.json" reports/zap.json
+                    docker cp "$ZAP:/zap/wrk/zap.html" reports/zap.html
+                '''
+            }
+        }
     }
 
     post {
         always {
             archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
             sh '''
-                docker rm -f "$WEB" "$MONGO" || true
+                docker rm -f "$ZAP" "$WEB" "$MONGO" || true
                 docker network rm "$NET" || true
             '''
         }
