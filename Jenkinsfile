@@ -56,6 +56,21 @@ pipeline {
             }
         }
 
+        // Software composition analysis (SCA): checks every npm package version in package-lock.json
+        // against a database of known vulnerabilities (CVEs). Needs no build, only the dependency list.
+        // The trivy-cache volume keeps the vulnerability database between runs, so it is downloaded only once.
+        // Like the other scans, it only reports for now.
+        stage('scan_dependencies') {
+            steps {
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                        fs --skip-version-check --scanners vuln --severity HIGH,CRITICAL --exit-code 0 \
+                        --format json --output reports/trivy-deps.json .
+                '''
+            }
+        }
+
         stage('Build image') {
             steps {
                 sh 'docker build -t "$IMAGE" .'
