@@ -46,17 +46,23 @@ pipeline {
         // Static analysis (SAST): reads the JavaScript source for dangerous patterns without running the app.
         // Third-party libraries under app/assets/vendor are not our code, so they are skipped.
         // The Semgrep image refuses to run unless the code is mounted at /src, so /src is made to point at the workspace.
-        // Like the secrets scan, it only reports for now.
+        // QUALITY GATE, two passes: pass 1 saves every finding to the report and never fails; pass 2 is the gate,
+        // it looks only at severity ERROR (likely exploitable code) and --error makes it exit 1 if it finds any.
+        // WARNING findings (hardening gaps) stay in the report but do not block.
         stage('sast') {
             steps {
-                sh '''
-                    mkdir -p reports
-                    docker run --rm --volumes-from jenkins -e WS="$WORKSPACE" --entrypoint sh semgrep/semgrep -c '
-                        ln -s "$WS" /src && cd "$WS" &&
-                        semgrep --config p/javascript --exclude app/assets/vendor --metrics=off \
-                            --json --output reports/semgrep.json .
-                    '
-                '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        mkdir -p reports
+                        docker run --rm --volumes-from jenkins -e WS="$WORKSPACE" --entrypoint sh semgrep/semgrep -c '
+                            ln -s "$WS" /src && cd "$WS" &&
+                            semgrep --config p/javascript --exclude app/assets/vendor --metrics=off \
+                                --json --output reports/semgrep.json . &&
+                            semgrep --config p/javascript --exclude app/assets/vendor --metrics=off \
+                                --severity ERROR --error --quiet .
+                        '
+                    '''
+                }
             }
         }
 
