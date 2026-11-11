@@ -28,15 +28,18 @@ pipeline {
 
         // Looks for passwords, keys and tokens in the working tree and in the whole git history.
         // The scanner runs as a throwaway container; --volumes-from jenkins gives it the checked-out workspace.
-        // It only reports for now (--exit-code 0): blocking thresholds come later with the quality gate.
+        // QUALITY GATE: any leak not listed in .gitleaksignore (the approved exemptions) makes it exit 1 and fail the build.
+        // catchError marks the build as failed but lets the remaining scans run, so one run collects all the evidence.
         stage('secrets_scan') {
             steps {
-                sh '''
-                    mkdir -p reports
-                    docker run --rm --volumes-from jenkins -w "$WORKSPACE" zricethezav/gitleaks:latest \
-                        detect --source . --redact --exit-code 0 \
-                        --report-format json --report-path reports/gitleaks.json
-                '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        mkdir -p reports
+                        docker run --rm --volumes-from jenkins -w "$WORKSPACE" zricethezav/gitleaks:latest \
+                            detect --source . --redact --exit-code 1 \
+                            --report-format json --report-path reports/gitleaks.json
+                    '''
+                }
             }
         }
 
