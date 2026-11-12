@@ -3,11 +3,20 @@
 pipeline {
     agent any
 
+    // Automatic execution: every 5 minutes Jenkins checks the repository and starts a build only if there is a new commit.
+    // Polling is used because this Jenkins runs on a laptop that GitHub cannot reach; with a public server a webhook would replace it.
+    triggers {
+        pollSCM('H/5 * * * *')
+    }
+
     options {
         timestamps()
         ansiColor('xterm')
-        timeout(time: 20, unit: 'MINUTES')
+        // A full run takes about 18 minutes (the active scan is the longest stage), so the whole-build limit leaves a wide margin.
+        timeout(time: 40, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
+        // One build at a time: two full runs together would compete for memory on this machine.
+        disableConcurrentBuilds()
     }
 
     environment {
