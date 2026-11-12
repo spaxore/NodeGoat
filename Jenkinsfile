@@ -283,6 +283,9 @@ pipeline {
         // The attack target is the throwaway container of this build, inside the isolated build network. The scan is unauthenticated,
         // so pages behind the login are not tested, and the tutorial pages embed third-party content that ZAP's browser also loads (it is not the target).
         // The first ZAP container is removed so its name can be reused (the dast stage has already copied its reports).
+        // The -z options ask ZAP to stop the attack phase after 10 minutes and any single rule after 2 (the scan length varied
+        // from 12 to 29 minutes between builds). These two option names come from ZAP's documentation and were NOT checked
+        // against this ZAP version: the first build with them shows whether the stage really got shorter.
         // The timeout stops a slow scan from blocking Jenkins. QUALITY GATE: same rule as dast, any High-risk alert fails the stage.
         stage('pentest') {
             steps {
@@ -292,7 +295,7 @@ pipeline {
                             mkdir -p reports
                             docker rm -f "$ZAP" || true
                             docker run --name "$ZAP" --network "$NET" --entrypoint sh zaproxy/zap-stable -c \
-                                "mkdir -p /zap/wrk && zap-full-scan.py -t http://$WEB:4000 -m 1 -r zap-full.html -J zap-full.json -I"
+                                "mkdir -p /zap/wrk && zap-full-scan.py -t http://$WEB:4000 -m 1 -r zap-full.html -J zap-full.json -I -z '-config scanner.maxScanDurationInMins=10 -config scanner.maxRuleDurationInMins=2'"
                             docker cp "$ZAP:/zap/wrk/zap-full.json" reports/zap-full.json
                             docker cp "$ZAP:/zap/wrk/zap-full.html" reports/zap-full.html
 
