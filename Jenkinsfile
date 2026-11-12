@@ -286,19 +286,18 @@ pipeline {
         // --memory 4g limits the ZAP container. Builds #22 and #23 lost the connection to Docker ("unexpected EOF") in the middle of this
         // scan, and Docker Desktop was found stopped afterwards. The cause is not proven; the limit is an attempt to keep a heavy scan
         // from starving the Docker VM (7.6 GB), so that ZAP alone would fail with a clear message.
-        // The -z options ask ZAP to stop the attack phase after 10 minutes and any single rule after 2 (the scan length varied
-        // from 12 to 29 minutes between builds). These two option names come from ZAP's documentation and were NOT checked
-        // against this ZAP version: the first build with them shows whether the stage really got shorter.
+        // The scan length varies from about 12 to 27 minutes between builds. An attempt to cap the attack phase with ZAP's
+        // scanner.maxScanDurationInMins option had no effect (build #24 still took 27 minutes), so it was removed.
         // The timeout stops a slow scan from blocking Jenkins. QUALITY GATE: same rule as dast, any High-risk alert fails the stage.
         stage('pentest') {
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    timeout(time: 30, unit: 'MINUTES') {
+                    timeout(time: 40, unit: 'MINUTES') {
                         sh '''
                             mkdir -p reports
                             docker rm -f "$ZAP" || true
                             docker run --name "$ZAP" --network "$NET" --memory 4g --entrypoint sh zaproxy/zap-stable -c \
-                                "mkdir -p /zap/wrk && zap-full-scan.py -t http://$WEB:4000 -m 1 -r zap-full.html -J zap-full.json -I -z '-config scanner.maxScanDurationInMins=10 -config scanner.maxRuleDurationInMins=2'"
+                                "mkdir -p /zap/wrk && zap-full-scan.py -t http://$WEB:4000 -m 1 -r zap-full.html -J zap-full.json -I"
                             docker cp "$ZAP:/zap/wrk/zap-full.json" reports/zap-full.json
                             docker cp "$ZAP:/zap/wrk/zap-full.html" reports/zap-full.html
 
@@ -373,6 +372,20 @@ pipeline {
                 docker rm -f "$FALCO" "$ZAP" "$WEB" "$MONGO" || true
                 docker network rm "$NET" || true
             '''
+            // Notification: one short message with the result and a link to the build, sent to a chat webhook.
+            // The webhook URL is a secret, so it comes from the Jenkins credential "notify-webhook" and is never written in this file.
+            // Single quotes below keep Groovy from copying the secret into the script text; Jenkins also masks it in the log.
+            // A failed notification must never change the build result, hence "|| echo".
+            withEnv(["RESULT=${currentBuild.currentResult}"]) {
+              withCredentials([string(credentialsId: 'notify-webhook', variable: 'HOOK')]) {
+                sh '''
+                    msg="NodeGoat pipeline #${BUILD_NUMBER} finished: ${RESULT}. Details and reports: ${BUILD_URL}"
+                    curl -s -S -m 20 -X POST -H 'Content-Type: application/json' \
+                        --data "{\\"text\\": \\"$msg\\"}" "$HOOK" > /dev/null \
+                        && echo "Notification sent" || echo "Notification could not be sent"
+                '''
+              }
+            }
         }
     }
 }
