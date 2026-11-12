@@ -380,12 +380,13 @@ pipeline {
             // failed), so the page always describes the whole build. The script runs in a small throwaway Python container.
             catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
                 sh '''
-                    mkdir -p reports
+                    mkdir -p reports history
                     docker run --rm --volumes-from jenkins -e WS="$WORKSPACE" -e BUILD_NUMBER python:3.12-alpine \
-                        sh -c 'python -I "$WS/scripts/summary.py" "$WS/reports" "$WS/reports/summary.html" "$BUILD_NUMBER"'
+                        sh -c 'python -I "$WS/scripts/summary.py" "$WS/reports" "$WS/reports/summary.html" "$BUILD_NUMBER" "$WS/history/trend.csv"'
                 '''
             }
-            archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+            // history/trend.csv keeps one line per build and survives between builds because the workspace is reused.
+            archiveArtifacts artifacts: 'reports/**, history/**', allowEmptyArchive: true
             sh '''
                 docker rm -f "$FALCO" "$ZAP" "$WEB" "$MONGO" || true
                 docker network rm "$NET" || true

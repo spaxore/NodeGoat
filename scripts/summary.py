@@ -4,13 +4,17 @@ Usage: python summary.py <reports_dir> <output_html> <build_number>
 Only the standard library is used, so it runs in any plain Python image.
 The decisions (BLOCKED / PASS) repeat the quality-gate rules of the Jenkinsfile, so the page and the pipeline agree.
 """
+import csv
+import datetime
 import html
 import json
 import os
 import re
 import sys
 
+# The optional 4th argument is a CSV file that keeps one line per build, so results can be compared over time.
 reports, output, build = sys.argv[1], sys.argv[2], sys.argv[3]
+history_file = sys.argv[4] if len(sys.argv) > 4 else None
 
 
 def load(name):
@@ -49,6 +53,7 @@ def zap_alerts(report):
 RISK = {"3": "High", "2": "Medium", "1": "Low", "0": "Informational"}
 gates = []  # one row per gate: (stage, rule, observed, blocked)
 details = []  # one block of detailed rows per tool
+metrics = {}  # the numbers of this build that go into the history file
 
 
 def add_gate(stage, rule, observed, blocked):
@@ -62,6 +67,7 @@ def add_details(title, header, rows):
 # secrets_scan: the report holds only the leaks that are NOT exempted in .gitleaksignore
 leaks = load("gitleaks.json")
 if leaks is not None:
+    metrics["leaks"] = len(leaks)
     add_gate("secrets_scan", "any non-exempted leak blocks", f"{len(leaks)} leak(s)", len(leaks) > 0)
 
 # sast: Semgrep, severity ERROR blocks, WARNING only warns
@@ -69,6 +75,7 @@ semgrep = load("semgrep.json")
 if semgrep is not None:
     found = semgrep.get("results", [])
     errors = [r for r in found if r["extra"]["severity"] == "ERROR"]
+    metrics["sast_errors"], metrics["sast_warnings"] = len(errors), len(found) - len(errors)
     add_gate("sast", "Semgrep severity ERROR blocks", f"{len(errors)} error(s), {len(found) - len(errors)} warning(s)", len(errors) > 0)
     add_details("SAST findings (Semgrep)", ["Severity", "Rule", "File", "Line"],
                 [[r["extra"]["severity"], r["check_id"].split(".")[-1], r["path"], r["start"]["line"]] for r in found])
@@ -79,6 +86,7 @@ if deps is not None:
     vulns, _ = trivy_findings(deps)
     crit = [v for v in vulns if v["Severity"] == "CRITICAL"]
     crit_fix = [v for v in crit if v.get("FixedVersion")]
+    metrics["deps_critical_fix"] = len(crit_fix)
     add_gate("scan_dependencies", "CRITICAL with a fix blocks",
              f"{len(crit_fix)} critical with fix ({len(crit)} critical, {len(vulns)} in total)", len(crit_fix) > 0)
     add_details("Critical dependency vulnerabilities (Trivy)", ["CVE", "Package", "Installed", "Fixed in"],
@@ -92,6 +100,7 @@ if checkov is not None:
     for r in reports_list:
         for c in r["results"].get("failed_checks", []):
             failed.append([r["check_type"], c["check_id"], c.get("check_name", ""), c.get("file_path", "")])
+    metrics["config_failed"] = len(failed)
     add_gate("config_scan", "any failed Checkov check blocks", f"{len(failed)} failed check(s)", len(failed) > 0)
     add_details("Failed configuration checks (Checkov)", ["Type", "Check", "Description", "File"], failed)
 
@@ -101,6 +110,7 @@ if image is not None:
     vulns, secrets = trivy_findings(image)
     crit = [v for v in vulns if v["Severity"] == "CRITICAL"]
     crit_fix = [v for v in crit if v.get("FixedVersion")]
+    metrics["image_critical_fix"], metrics["image_secrets"] = len(crit_fix), len(secrets)
     add_gate("docker_scan", "CRITICAL with a fix, or any secret, blocks",
              f"{len(crit_fix)} critical with fix, {len(secrets)} secret(s), {len(vulns)} vulnerabilities in total",
              len(crit_fix) > 0 or len(secrets) > 0)
@@ -115,6 +125,7 @@ for stage, name in (("dast", "zap.json"), ("pentest", "zap-full.json")):
     alerts = zap_alerts(zap)
     highs = [a for a in alerts if a["riskcode"] == "3"]
     counts = {RISK[k]: sum(1 for a in alerts if a["riskcode"] == k) for k in RISK}
+    metrics[f"{stage}_high"] = len(highs)
     add_gate(stage, "any High alert blocks", f"{len(highs)} high ({counts['Medium']} medium, {counts['Low']} low)", len(highs) > 0)
     add_details(f"ZAP alerts ({stage})", ["Risk", "Alert", "Instances"],
                 [[RISK[a["riskcode"]], a["name"], a.get("count", "")] for a in sorted(alerts, key=lambda a: -int(a["riskcode"]))])
@@ -128,6 +139,30 @@ monitoring = [
     ("Requests to protected pages without a session", app_log.count("redirecting to login")),
     ("Rejected signups", app_log.count("user did not validate")),
 ]
+
+
+metrics["falco_alerts"] = monitoring[0][1]
+metrics["failed_logins"] = monitoring[1][1]
+
+# History: one line per build in a CSV file that lives next to the workspace, not in reports/ (which is emptied at every checkout).
+# A build number already in the file is replaced, so re-running the script never duplicates a line.
+COLUMNS = ["build", "date", "leaks", "sast_errors", "sast_warnings", "deps_critical_fix", "config_failed",
+           "image_critical_fix", "image_secrets", "dast_high", "pentest_high", "falco_alerts", "failed_logins"]
+trend = []
+if history_file:
+    os.makedirs(os.path.dirname(history_file) or ".", exist_ok=True)
+    rows = []
+    if os.path.exists(history_file):
+        with open(history_file, encoding="utf-8", newline="") as f:
+            rows = [r for r in csv.DictReader(f) if r["build"] != build]
+    row = {"build": build, "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M")}
+    row.update({c: metrics.get(c, "") for c in COLUMNS[2:]})  # a stage that did not run leaves its cell empty
+    rows.append(row)
+    with open(history_file, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    trend = rows[-15:]
 
 
 def table(header, rows):
@@ -161,6 +196,10 @@ parts.append(table(["Signal", "Count"], monitoring))
 for title, header, rows in details:
     parts.append(f"<h2>{html.escape(title)}</h2>")
     parts.append(table(header, rows) if rows else "<p>Nothing to report.</p>")
+if trend:
+    parts.append(f"<h2>Trend over the last {len(trend)} build(s)</h2>")
+    parts.append("<p>An empty cell means that stage did not run or did not produce a report in that build.</p>")
+    parts.append(table(COLUMNS, [[r[c] if r[c] != "" else "-" for c in COLUMNS] for r in trend]))
 parts.append("</body></html>")
 
 with open(output, "w", encoding="utf-8") as f:
