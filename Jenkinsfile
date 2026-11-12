@@ -99,7 +99,7 @@ pipeline {
                         mkdir -p reports
                         docker run --rm --volumes-from jenkins -w "$WORKSPACE" bridgecrew/checkov:latest \
                             -d . --skip-path node_modules --skip-path docs --skip-path reports --soft-fail \
-                            -o json --output-file-path reports
+                            --compact --quiet -o json --output-file-path reports > /dev/null
                         docker run --rm --volumes-from jenkins -w "$WORKSPACE" bridgecrew/checkov:latest \
                             -d . --skip-path node_modules --skip-path docs --skip-path reports \
                             -o cli --compact --quiet
@@ -206,7 +206,8 @@ pipeline {
 
         // Dynamic analysis (DAST): OWASP ZAP attacks the running app from outside, like a real attacker.
         // It reuses the app and network started by the Smoke test, so it must stay after that stage.
-        // -m 1 limits the crawl to one minute and -I keeps warnings from failing the build (report only for now).
+        // -m 3 limits the crawl to three minutes (one minute sometimes missed pages, so the High alert came and went
+        // between builds) and -I keeps warnings from failing the build; only the High-risk check below can fail it.
         // The ZAP container is not removed on exit so the reports can be copied out; the post block cleans it up.
         // QUALITY GATE: after the scan, the JSON report is searched for alerts of risk code 3 (High). Any one of them
         // fails the stage. Medium, Low and Informational alerts stay in the report and only warn.
@@ -216,7 +217,7 @@ pipeline {
                     sh '''
                         mkdir -p reports
                         docker run --name "$ZAP" --network "$NET" --entrypoint sh zaproxy/zap-stable -c \
-                            "mkdir -p /zap/wrk && zap-baseline.py -t http://$WEB:4000 -m 1 -r zap.html -J zap.json -I"
+                            "mkdir -p /zap/wrk && zap-baseline.py -t http://$WEB:4000 -m 3 -r zap.html -J zap.json -I"
                         docker cp "$ZAP:/zap/wrk/zap.json" reports/zap.json
                         docker cp "$ZAP:/zap/wrk/zap.html" reports/zap.html
 
