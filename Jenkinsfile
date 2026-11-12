@@ -266,6 +266,36 @@ pipeline {
             }
         }
 
+        // Penetration test: the same ZAP tool, but in active mode. The baseline scan above only watches traffic; the full scan
+        // also sends attack payloads (injection, XSS, path traversal...) to the app and reports what actually answers like a vulnerable page.
+        // It only targets the throwaway container of this build, inside the isolated build network, never anything else.
+        // The first ZAP container is removed so its name can be reused (the dast stage has already copied its reports).
+        // The timeout stops a slow scan from blocking Jenkins. QUALITY GATE: same rule as dast, any High-risk alert fails the stage.
+        stage('pentest') {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    timeout(time: 20, unit: 'MINUTES') {
+                        sh '''
+                            mkdir -p reports
+                            docker rm -f "$ZAP" || true
+                            docker run --name "$ZAP" --network "$NET" --entrypoint sh zaproxy/zap-stable -c \
+                                "mkdir -p /zap/wrk && zap-full-scan.py -t http://$WEB:4000 -m 1 -r zap-full.html -J zap-full.json -I"
+                            docker cp "$ZAP:/zap/wrk/zap-full.json" reports/zap-full.json
+                            docker cp "$ZAP:/zap/wrk/zap-full.html" reports/zap-full.html
+
+                            highs=$(grep -o '"riskcode": *"3"' reports/zap-full.json | wc -l)
+                            echo "Pentest high-risk alerts: $highs"
+                            if [ "$highs" -gt 0 ]; then
+                                echo "Blocking alerts:"
+                                grep -B1 '"riskcode": *"3"' reports/zap-full.json | grep '"name"'
+                                exit 1
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+
         // Intrusion monitoring, part 2: reads what Falco saw while the app was started, checked and attacked by ZAP.
         // The whole log is saved as a report; the alerts that name the application container are printed here.
         // Monitoring detects and reports, it does not block: an alert is a lead for a human to investigate.
