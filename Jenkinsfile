@@ -99,6 +99,9 @@ pipeline {
                         docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
                             fs --skip-version-check --scanners vuln --severity HIGH,CRITICAL --exit-code 0 \
                             --format json --output reports/trivy-deps.json .
+                        # SBOM (software bill of materials): the full list of packages in the standard CycloneDX format, saved as an artifact.
+                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                            fs --skip-version-check --scanners vuln --format cyclonedx --output reports/sbom.cdx.json .
                         docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
                             fs --skip-version-check --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
                             --format table .
