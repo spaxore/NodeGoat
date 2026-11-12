@@ -167,6 +167,7 @@ pipeline {
                     docker network create "$NET"
                     docker run -d --name "$MONGO" --network "$NET" mongo:4.4
                     docker run -d --name "$WEB" --network "$NET" \
+                        --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --memory 512m --pids-limit 256 \
                         -e MONGODB_URI="mongodb://$MONGO:27017/nodegoat" \
                         "$IMAGE" \
                         sh -c "until nc -z -w 2 $MONGO 27017; do sleep 2; done; node artifacts/db-reset.js && npm start"
@@ -210,6 +211,18 @@ pipeline {
                                 echo "FAIL: /$p answered with status $code"; fail=1
                             fi
                         done
+
+                        if docker exec "$WEB" sh -c "echo x > /home/node/app/injected.txt" 2>/dev/null; then
+                            echo "FAIL: the application folder is writable"; fail=1
+                        else
+                            echo "PASS: the filesystem is read-only"
+                        fi
+
+                        caps=$(docker exec "$WEB" sh -c "grep CapEff /proc/1/status")
+                        case "$caps" in
+                            *0000000000000000) echo "PASS: the app process has no Linux capabilities" ;;
+                            *) echo "FAIL: the app process has capabilities ($caps)"; fail=1 ;;
+                        esac
 
                         cookie=$(docker exec "$WEB" sh -c "wget -S -O /dev/null http://localhost:4000/login 2>&1 | grep -i set-cookie")
                         case "$cookie" in

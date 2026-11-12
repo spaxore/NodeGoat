@@ -9,6 +9,16 @@ services:
     command: sh -c "until nc -z -w 2 mongo 27017 && echo 'mongo is ready for connections' && node artifacts/db-reset.js && npm start; do sleep 2; done"
     ports:
       - "4000:4000"
+    # Hardening (least privilege): if the app is compromised, the container gives the attacker as little as possible.
+    read_only: true              # the filesystem cannot be written to
+    tmpfs:
+      - /tmp                     # the only writable place, kept in memory
+    cap_drop:
+      - ALL                      # no Linux capabilities: the app does not need any
+    security_opt:
+      - no-new-privileges:true   # a process can never gain more privileges than it started with
+    mem_limit: 512m              # cap memory so one container cannot starve the host
+    pids_limit: 256              # cap the number of processes
 
   mongo:
     image: mongo:4.4
