@@ -268,7 +268,8 @@ pipeline {
 
         // Penetration test: the same ZAP tool, but in active mode. The baseline scan above only watches traffic; the full scan
         // also sends attack payloads (injection, XSS, path traversal...) to the app and reports what actually answers like a vulnerable page.
-        // It only targets the throwaway container of this build, inside the isolated build network, never anything else.
+        // The attack target is the throwaway container of this build, inside the isolated build network. The scan is unauthenticated,
+        // so pages behind the login are not tested, and the tutorial pages embed third-party content that ZAP's browser also loads (it is not the target).
         // The first ZAP container is removed so its name can be reused (the dast stage has already copied its reports).
         // The timeout stops a slow scan from blocking Jenkins. QUALITY GATE: same rule as dast, any High-risk alert fails the stage.
         stage('pentest') {
@@ -292,6 +293,35 @@ pipeline {
                             fi
                         '''
                     }
+                }
+            }
+        }
+
+        // Log monitoring: reads the application's own log after the scans and counts the security events it recorded
+        // (failed logins, access to protected pages without a session, rejected signups, database errors).
+        // The full log is saved as a report. More than 10 failed logins in one run raises an ALERT line (a possible password-guessing attack).
+        // Like Falco, this stage detects and reports; it does not block the build.
+        // Only the counts and the first lines of each event are printed: the log contains text typed by the attacker, so it is kept out of the console.
+        stage('log_monitor') {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        mkdir -p reports
+                        docker logs "$WEB" > reports/app.log 2>&1
+                        failed=$(grep -c "attempt to login with invalid user" reports/app.log || true)
+                        noauth=$(grep -c "redirecting to login" reports/app.log || true)
+                        badsignup=$(grep -c "user did not validate" reports/app.log || true)
+                        dberr=$(grep -c "Error: DB" reports/app.log || true)
+                        echo "Application log lines: $(wc -l < reports/app.log)"
+                        echo "Failed logins: $failed"
+                        echo "Requests to protected pages without a session: $noauth"
+                        echo "Rejected signups: $badsignup"
+                        echo "Database errors: $dberr"
+                        if [ "$failed" -gt 10 ]; then
+                            echo "ALERT: $failed failed logins in one run, possible password-guessing attack"
+                            grep "attempt to login with invalid user" reports/app.log | head -n 3 | cut -c1-120
+                        fi
+                    '''
                 }
             }
         }
