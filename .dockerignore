@@ -4,3 +4,9 @@ docker-compose.yml
 .git
 .github
 .gitignore
+# Pipeline output and tooling: the scan reports, the build history, the report script and the project notes are not part of the app.
+# Without these lines the Jenkins workspace content (reports/ with the SBOM, trivy-deps.json...) was copied into the image.
+reports
+history
+scripts
+docs
