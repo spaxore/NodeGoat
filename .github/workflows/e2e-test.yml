@@ -1,6 +1,10 @@
 name: E2E Test
 on: [push, pull_request]
 
+# Least privilege: the workflow token can only read the repository.
+permissions:
+  contents: read
+
 jobs:
   e2e-test:
     name: Node.js

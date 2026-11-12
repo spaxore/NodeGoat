@@ -27,3 +27,7 @@ RUN jenkins-plugin-cli --plugins \
     htmlpublisher \
     timestamper \
     ansicolor
+
+# Reports whether the Jenkins web interface answers (the login page is public). Takes effect the next time this image is rebuilt.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+  CMD curl -fsS -o /dev/null http://localhost:8080/login || exit 1

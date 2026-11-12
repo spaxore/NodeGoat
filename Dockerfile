@@ -16,3 +16,6 @@ COPY --chown=node . $WORKDIR
 # Then all further actions including running the containers should be done under non-root user.
 USER $USER
 EXPOSE 4000
+# Lets Docker (and an orchestrator) see whether the web server still answers, not only whether the process is alive.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD wget -q -O /dev/null http://localhost:4000/login || exit 1

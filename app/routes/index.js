@@ -68,8 +68,18 @@ const index = (app, db) => {
 
     // Handle redirect for learning resources link
     app.get("/learn", isLoggedIn, (req, res) => {
-        // Insecure way to handle redirects by taking redirect url from query string
-        return res.redirect(req.query.url);
+        // Fix for A10 unvalidated redirects: only the trusted learning site (allow list) is accepted.
+        // Any other address, or text that is not a valid URL, sends the user back to the dashboard.
+        let target;
+        try {
+            target = new URL(req.query.url);
+        } catch (err) {
+            return res.redirect("/dashboard");
+        }
+        if (target.protocol === "https:" && target.hostname === "www.khanacademy.org") {
+            return res.redirect(target.toString());
+        }
+        return res.redirect("/dashboard");
     });
 
     // Research Page
