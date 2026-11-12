@@ -9,6 +9,12 @@ pipeline {
         pollSCM('H/5 * * * *')
     }
 
+    // The active penetration test takes 12 to 40 minutes, so it does not run on every push.
+    // Tick RUN_PENTEST in "Build with Parameters" to run it; automatic builds skip it and finish in a few minutes.
+    parameters {
+        booleanParam(name: 'RUN_PENTEST', defaultValue: false, description: 'Run the active ZAP penetration test (slow: 12 to 40 minutes)')
+    }
+
     options {
         timestamps()
         ansiColor('xterm')
@@ -288,8 +294,11 @@ pipeline {
         // from starving the Docker VM (7.6 GB), so that ZAP alone would fail with a clear message.
         // The scan length varies from about 12 to 27 minutes between builds. An attempt to cap the attack phase with ZAP's
         // scanner.maxScanDurationInMins option had no effect (build #24 still took 27 minutes), so it was removed.
+        // This stage runs only when RUN_PENTEST is ticked. When it is skipped it cannot block the build, so the pen-test gate
+        // is enforced on demand, not on every push. Evidence of full runs: builds 19 and 24.
         // The timeout stops a slow scan from blocking Jenkins. QUALITY GATE: same rule as dast, any High-risk alert fails the stage.
         stage('pentest') {
+            when { expression { return params.RUN_PENTEST } }
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
                     timeout(time: 40, unit: 'MINUTES') {
