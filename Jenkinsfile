@@ -88,6 +88,26 @@ pipeline {
             }
         }
 
+        // Configuration safety check (IaC scan): Checkov reads the Dockerfiles and the GitHub workflows for risky settings
+        // (missing HEALTHCHECK, over-broad workflow permissions...). Static, so it needs no build.
+        // QUALITY GATE, two passes: pass 1 (--soft-fail) writes the full JSON report and never fails; pass 2 prints the
+        // readable findings and exits 1 if any check failed. node_modules, docs and reports are not our configuration.
+        stage('config_scan') {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        mkdir -p reports
+                        docker run --rm --volumes-from jenkins -w "$WORKSPACE" bridgecrew/checkov:latest \
+                            -d . --skip-path node_modules --skip-path docs --skip-path reports --soft-fail \
+                            -o json --output-file-path reports
+                        docker run --rm --volumes-from jenkins -w "$WORKSPACE" bridgecrew/checkov:latest \
+                            -d . --skip-path node_modules --skip-path docs --skip-path reports \
+                            -o cli --compact --quiet
+                    '''
+                }
+            }
+        }
+
         stage('Build image') {
             steps {
                 sh 'docker build -t "$IMAGE" .'
