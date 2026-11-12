@@ -376,6 +376,15 @@ pipeline {
 
     post {
         always {
+            // Reporting: turns the raw JSON reports into one readable page. It runs here, after every stage (even when some
+            // failed), so the page always describes the whole build. The script runs in a small throwaway Python container.
+            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -e WS="$WORKSPACE" -e BUILD_NUMBER python:3.12-alpine \
+                        sh -c 'python -I "$WS/scripts/summary.py" "$WS/reports" "$WS/reports/summary.html" "$BUILD_NUMBER"'
+                '''
+            }
             archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
             sh '''
                 docker rm -f "$FALCO" "$ZAP" "$WEB" "$MONGO" || true
