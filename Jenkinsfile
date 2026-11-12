@@ -12,8 +12,8 @@ pipeline {
     options {
         timestamps()
         ansiColor('xterm')
-        // A full run takes about 18 minutes (the active scan is the longest stage), so the whole-build limit leaves a wide margin.
-        timeout(time: 40, unit: 'MINUTES')
+        // A full run takes 17 to 25 minutes (the active scan is the longest stage and its length varies), so the whole-build limit leaves a wide margin.
+        timeout(time: 50, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
         // One build at a time: two full runs together would compete for memory on this machine.
         disableConcurrentBuilds()
@@ -33,6 +33,9 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                // The workspace is reused between builds. Without this, a stage that does not finish would leave the
+                // previous build's report in reports/ and Jenkins would archive it as if it belonged to this build.
+                sh 'rm -rf reports'
             }
         }
 
@@ -284,7 +287,7 @@ pipeline {
         stage('pentest') {
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    timeout(time: 20, unit: 'MINUTES') {
+                    timeout(time: 30, unit: 'MINUTES') {
                         sh '''
                             mkdir -p reports
                             docker rm -f "$ZAP" || true
