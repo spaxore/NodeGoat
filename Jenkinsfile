@@ -147,6 +147,43 @@ pipeline {
             }
         }
 
+        // Security smoke test: a few fast yes/no questions about whether the freshly started system is safe to expose.
+        // It reuses the app started by the Smoke test. Known weaknesses (missing headers, X-Powered-By) are left to the
+        // DAST stage so the two do not duplicate each other. Any FAIL makes the stage, and the build, fail.
+        stage('security_smoke') {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        fail=0
+
+                        uid=$(docker exec "$WEB" id -u)
+                        if [ "$uid" = "0" ]; then
+                            echo "FAIL: the app runs as root"; fail=1
+                        else
+                            echo "PASS: the app runs as a non-root user (uid $uid)"
+                        fi
+
+                        for p in .git/config package.json Dockerfile server.js config/env/all.js artifacts/cert/server.key .env; do
+                            code=$(docker exec "$WEB" sh -c "wget -S -O /dev/null http://localhost:4000/$p 2>&1 | grep 'HTTP/' | tail -n 1 | grep -o '[0-9][0-9][0-9]' | head -n 1")
+                            if [ "$code" = "404" ]; then
+                                echo "PASS: /$p is not exposed (404)"
+                            else
+                                echo "FAIL: /$p answered with status $code"; fail=1
+                            fi
+                        done
+
+                        cookie=$(docker exec "$WEB" sh -c "wget -S -O /dev/null http://localhost:4000/login 2>&1 | grep -i set-cookie")
+                        case "$cookie" in
+                            *HttpOnly*) echo "PASS: the session cookie is HttpOnly" ;;
+                            *) echo "FAIL: the session cookie is not HttpOnly"; fail=1 ;;
+                        esac
+
+                        exit $fail
+                    '''
+                }
+            }
+        }
+
         // Dynamic analysis (DAST): OWASP ZAP attacks the running app from outside, like a real attacker.
         // It reuses the app and network started by the Smoke test, so it must stay after that stage.
         // -m 1 limits the crawl to one minute and -I keeps warnings from failing the build (report only for now).
