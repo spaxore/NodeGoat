@@ -318,38 +318,31 @@ pipeline {
             }
         }
 
-        // Penetration test: the same ZAP tool, but in active mode. The baseline scan above only watches traffic; the full scan
-        // also sends attack payloads (injection, XSS, path traversal...) to the app and reports what actually answers like a vulnerable page.
-        // The attack target is the throwaway container of this build, inside the isolated build network. The scan is unauthenticated,
-        // so pages behind the login are not tested, and the tutorial pages embed third-party content that ZAP's browser also loads (it is not the target).
-        // The first ZAP container is removed so its name can be reused (the dast stage has already copied its reports).
-        // --memory 4g limits the ZAP container. Builds #22 and #23 lost the connection to Docker ("unexpected EOF") in the middle of this
-        // scan, and Docker Desktop was found stopped afterwards. The cause is not proven; the limit is an attempt to keep a heavy scan
-        // from starving the Docker VM (7.6 GB), so that ZAP alone would fail with a clear message.
-        // The scan length varies from about 12 to 27 minutes between builds. An attempt to cap the attack phase with ZAP's
-        // scanner.maxScanDurationInMins option had no effect (build #24 still took 27 minutes), so it was removed.
-        // This stage runs only when RUN_PENTEST is ticked. When it is skipped it cannot block the build, so the pen-test gate
-        // is enforced on demand, not on every push. Evidence of full runs: builds 19 and 24.
-        // The timeout stops a slow scan from blocking Jenkins. QUALITY GATE: same rule as dast, any High-risk alert fails the stage.
+        // Penetration test: the same ZAP tool, but in active mode. The baseline scan above only watches traffic; this one
+        // also sends attack payloads (injection, XSS, path traversal...) to the deployed staging app and reports what answers like a vulnerable page.
+        // The scan is unauthenticated, so pages behind the login are not tested.
+        // It is a focused scan, defined in zap/pentest-plan.yaml (ZAP automation plan): a 1 minute crawl, static files excluded, and an active scan
+        // that only uses the injection and redirect rules, with a time limit per rule and for the whole scan. The first version ran ZAP's full scan,
+        // which took 12 to 40+ minutes and once hit the timeout (build 43); the focused scan takes about 1 to 4 minutes and still finds the reflected XSS
+        // (checked on the unfixed app). Its limit: it does not run the other ZAP rules, so it is not a complete penetration test.
+        // --memory 2g limits the ZAP container (earlier full scans had lost the connection to Docker, cause not proven).
+        // This stage runs only when RUN_PENTEST is ticked. When it is skipped it cannot block the build.
+        // QUALITY GATE: scripts/zap_gate.py fails the stage on any High alert that is not exempted in zap-exemptions.json
+        // (each exemption names the pages it covers, a reason, an owner and an expiry date; exempted alerts stay in the report).
         stage('pentest') {
             when { expression { return params.RUN_PENTEST } }
             steps {
-                timeout(time: 40, unit: 'MINUTES') {
+                timeout(time: 15, unit: 'MINUTES') {
                     sh '''
                         mkdir -p reports
                         docker rm -f "$ZAP" || true
-                        docker run --name "$ZAP" --network "$STG_NET" --memory 4g --entrypoint sh zaproxy/zap-stable -c \
-                            "mkdir -p /zap/wrk && zap-full-scan.py -t http://$STG:4000 -m 1 -r zap-full.html -J zap-full.json -I"
+                        docker create --name "$ZAP" --network "$STG_NET" --memory 2g zaproxy/zap-stable                             sh -c "mkdir -p /zap/wrk && zap.sh -cmd -autorun /zap/plan.yaml"
+                        docker cp zap/pentest-plan.yaml "$ZAP:/zap/plan.yaml"
+                        docker start -a "$ZAP"
                         docker cp "$ZAP:/zap/wrk/zap-full.json" reports/zap-full.json
                         docker cp "$ZAP:/zap/wrk/zap-full.html" reports/zap-full.html
 
-                        highs=$(grep -o '"riskcode": *"3"' reports/zap-full.json | wc -l)
-                        echo "Pentest high-risk alerts: $highs"
-                        if [ "$highs" -gt 0 ]; then
-                            echo "Blocking alerts:"
-                            grep -B1 '"riskcode": *"3"' reports/zap-full.json | grep '"name"'
-                            exit 1
-                        fi
+                        docker run --rm --volumes-from jenkins -e WS="$WORKSPACE" python:3.12-alpine                             sh -c 'python -I "$WS/scripts/zap_gate.py" "$WS/reports/zap-full.json" "$WS/zap-exemptions.json"'
                     '''
                 }
             }

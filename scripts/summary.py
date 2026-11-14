@@ -130,9 +130,23 @@ for stage, name in (("dast", "zap.json"), ("pentest", "zap-full.json")):
         continue
     alerts = zap_alerts(zap)
     highs = [a for a in alerts if a["riskcode"] == "3"]
+    exempted = 0
+    if stage == "pentest":
+        # Same rule as scripts/zap_gate.py: an exemption only covers alerts whose instances are all on the listed pages.
+        zap_ex = os.path.join(os.path.dirname(os.path.abspath(reports)), "zap-exemptions.json")
+        today = datetime.date.today().isoformat()
+        active = {}
+        if os.path.exists(zap_ex):
+            active = {e["pluginid"]: e for e in json.load(open(zap_ex, encoding="utf-8")) if e["expires"] >= today}
+        def covered(a):
+            e = active.get(a.get("pluginid"))
+            return e is not None and all(any(u in i.get("uri", "") for u in e["uris"]) for i in a.get("instances", []))
+        exempted = sum(1 for a in highs if covered(a))
+        highs = [a for a in highs if not covered(a)]
     counts = {RISK[k]: sum(1 for a in alerts if a["riskcode"] == k) for k in RISK}
     metrics[f"{stage}_high"] = len(highs)
-    add_gate(stage, "any High alert blocks", f"{len(highs)} high ({counts['Medium']} medium, {counts['Low']} low)", len(highs) > 0)
+    note = f", {exempted} exempted" if exempted else ""
+    add_gate(stage, "any High alert blocks", f"{len(highs)} high{note} ({counts['Medium']} medium, {counts['Low']} low)", len(highs) > 0)
     add_details(f"ZAP alerts ({stage})", ["Risk", "Alert", "Instances"],
                 [[RISK[a["riskcode"]], a["name"], a.get("count", "")] for a in sorted(alerts, key=lambda a: -int(a["riskcode"]))])
 

@@ -1,0 +1,20 @@
+[
+  {
+    "pluginid": "40018",
+    "name": "SQL Injection",
+    "uris": ["/login", "/signup"],
+    "reason": "False positive. ZAP reports the login and signup forms as injectable by a boolean test (ZAP AND 1=1 / 1=2 gave different answers). The application uses MongoDB and the login lookup is an exact match (findOne by userName), so there is no SQL. The different answers came from ZAP's own signup attack, which saved users named like its payloads (for example 'ZAP AND 1=1 -- ') in the database; the login then found those users. Checked on staging by listing the users in the database.",
+    "owner": "Ikbal Messaoudi",
+    "decided": "2026-11-15",
+    "expires": "2027-02-12"
+  },
+  {
+    "pluginid": "6",
+    "name": "Path Traversal",
+    "uris": ["/allocations/"],
+    "reason": "False positive. ZAP reports the threshold parameter of /allocations/<id> with the attack value '4' and no evidence. Without a session the page only redirects to /login, and the route builds a database query, it never reads a file. Checked with curl: the request answers 302 to /login.",
+    "owner": "Ikbal Messaoudi",
+    "decided": "2026-11-15",
+    "expires": "2027-02-12"
+  }
+]

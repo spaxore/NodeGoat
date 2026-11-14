@@ -11,3 +11,5 @@ history
 scripts
 docs
 .vscode
+zap
+zap-exemptions.json
