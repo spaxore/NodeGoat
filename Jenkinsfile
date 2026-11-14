@@ -1,12 +1,17 @@
-// Baseline CI pipeline for NodeGoat: build the image and check that the app starts.
-// Security stages (secrets scan, SAST, SCA, image scan, DAST) are added on top of this in the next steps.
+// DevSecOps pipeline for NodeGoat: security checks at every phase, then deployment.
+// Order: checkout, static checks (secrets, SAST, dependencies, configuration), build, image scan, smoke and security checks,
+// deployment to staging, dynamic scans, monitoring, deployment to production.
+// Stages run in order and a failing gate stops the pipeline (fail fast): nothing after it runs, so nothing is deployed.
+// The post section at the end always runs: summary page, trend history, Slack notification and cleanup.
+// Started automatically by a GitHub webhook on every push (no polling).
 pipeline {
     agent any
 
-    // Automatic execution: every 5 minutes Jenkins checks the repository and starts a build only if there is a new commit.
-    // Polling is used because this Jenkins runs on a laptop that GitHub cannot reach; with a public server a webhook would replace it.
+    // Automatic execution, no polling: a GitHub webhook calls Jenkins on every push and the build starts at once.
+    // githubPush() comes from the Jenkins "GitHub" plugin. The webhook (GitHub repository settings) points to <Jenkins URL>/github-webhook/.
+    // This Jenkins runs on a laptop, so GitHub reaches it through a webhook relay (smee.io): see docs/webhook-setup.md.
     triggers {
-        pollSCM('H/5 * * * *')
+        githubPush()
     }
 
     // The active penetration test takes 12 to 40 minutes, so it does not run on every push.
@@ -33,6 +38,14 @@ pipeline {
         WEB   = "ci-web-${env.BUILD_NUMBER}"
         ZAP   = "ci-zap-${env.BUILD_NUMBER}"
         FALCO = "ci-falco-${env.BUILD_NUMBER}"
+        // Deployment targets use fixed names (not per build): the deployed app stays up between builds, so it can be opened in a browser.
+        // Staging is where the dynamic scans run; production is only updated when every quality gate passed.
+        STG = "nodegoat-staging"
+        STG_MONGO = "nodegoat-staging-mongo"
+        STG_NET = "nodegoat-staging-net"
+        PRD = "nodegoat-production"
+        PRD_MONGO = "nodegoat-production-mongo"
+        PRD_NET = "nodegoat-production-net"
     }
 
     stages {
@@ -48,17 +61,16 @@ pipeline {
         // Looks for passwords, keys and tokens in the working tree and in the whole git history.
         // The scanner runs as a throwaway container; --volumes-from jenkins gives it the checked-out workspace.
         // QUALITY GATE: any leak not listed in .gitleaksignore (the approved exemptions) makes it exit 1 and fail the build.
-        // catchError marks the build as failed but lets the remaining scans run, so one run collects all the evidence.
+        // FAIL FAST: if a gate fails, the stage fails and the pipeline STOPS here. Every later stage is skipped, so nothing is deployed.
+        // The post section at the end still runs (summary, notification, cleanup), whatever the result.
         stage('secrets_scan') {
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    sh '''
-                        mkdir -p reports
-                        docker run --rm --volumes-from jenkins -w "$WORKSPACE" zricethezav/gitleaks:latest \
-                            detect --source . --redact --exit-code 1 \
-                            --report-format json --report-path reports/gitleaks.json
-                    '''
-                }
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -w "$WORKSPACE" zricethezav/gitleaks:latest \
+                        detect --source . --redact --exit-code 1 \
+                        --report-format json --report-path reports/gitleaks.json
+                '''
             }
         }
 
@@ -70,18 +82,16 @@ pipeline {
         // WARNING findings (hardening gaps) stay in the report but do not block.
         stage('sast') {
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    sh '''
-                        mkdir -p reports
-                        docker run --rm --volumes-from jenkins -e WS="$WORKSPACE" --entrypoint sh semgrep/semgrep -c '
-                            ln -s "$WS" /src && cd "$WS" &&
-                            semgrep --config p/javascript --exclude app/assets/vendor --metrics=off \
-                                --json --output reports/semgrep.json . &&
-                            semgrep --config p/javascript --exclude app/assets/vendor --metrics=off \
-                                --severity ERROR --error --quiet .
-                        '
-                    '''
-                }
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -e WS="$WORKSPACE" --entrypoint sh semgrep/semgrep -c '
+                        ln -s "$WS" /src && cd "$WS" &&
+                        semgrep --config p/javascript --exclude app/assets/vendor --metrics=off \
+                            --json --output reports/semgrep.json . &&
+                        semgrep --config p/javascript --exclude app/assets/vendor --metrics=off \
+                            --severity ERROR --error --quiet .
+                    '
+                '''
             }
         }
 
@@ -91,22 +101,22 @@ pipeline {
         // QUALITY GATE, two passes: pass 1 saves every HIGH and CRITICAL finding to the report and never fails;
         // pass 2 is the gate, it looks only at CRITICAL vulnerabilities that already have a fixed version
         // (--ignore-unfixed) and exits 1 if there is one. HIGH findings, and critical ones nobody has fixed yet, only warn.
+        // Accepted risks are listed in .trivyignore (reason, owner and expiry date for each, see docs/exemption-process.md).
+        // --show-suppressed keeps those findings in the report, so an exemption never hides anything.
         stage('scan_dependencies') {
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    sh '''
-                        mkdir -p reports
-                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
-                            fs --skip-version-check --scanners vuln --severity HIGH,CRITICAL --exit-code 0 \
-                            --format json --output reports/trivy-deps.json .
-                        # SBOM (software bill of materials): the full list of packages in the standard CycloneDX format, saved as an artifact.
-                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
-                            fs --skip-version-check --scanners vuln --format cyclonedx --output reports/sbom.cdx.json .
-                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
-                            fs --skip-version-check --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
-                            --format table .
-                    '''
-                }
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                        fs --skip-version-check --scanners vuln --severity HIGH,CRITICAL --exit-code 0 --show-suppressed \
+                        --format json --output reports/trivy-deps.json .
+                    # SBOM (software bill of materials): the full list of packages in the standard CycloneDX format, saved as an artifact.
+                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                        fs --skip-version-check --scanners vuln --format cyclonedx --output reports/sbom.cdx.json .
+                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                        fs --skip-version-check --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+                        --format table .
+                '''
             }
         }
 
@@ -116,17 +126,15 @@ pipeline {
         // readable findings and exits 1 if any check failed. node_modules, docs and reports are not our configuration.
         stage('config_scan') {
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    sh '''
-                        mkdir -p reports
-                        docker run --rm --volumes-from jenkins -w "$WORKSPACE" bridgecrew/checkov:latest \
-                            -d . --skip-path node_modules --skip-path docs --skip-path reports --soft-fail \
-                            --compact --quiet -o json --output-file-path reports > /dev/null
-                        docker run --rm --volumes-from jenkins -w "$WORKSPACE" bridgecrew/checkov:latest \
-                            -d . --skip-path node_modules --skip-path docs --skip-path reports \
-                            -o cli --compact --quiet
-                    '''
-                }
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -w "$WORKSPACE" bridgecrew/checkov:latest \
+                        -d . --skip-path node_modules --skip-path docs --skip-path reports --soft-fail \
+                        --compact --quiet -o json --output-file-path reports > /dev/null
+                    docker run --rm --volumes-from jenkins -w "$WORKSPACE" bridgecrew/checkov:latest \
+                        -d . --skip-path node_modules --skip-path docs --skip-path reports \
+                        -o cli --compact --quiet
+                '''
             }
         }
 
@@ -144,22 +152,20 @@ pipeline {
         // because Trivy rates a leaked private key as HIGH and the severity filter of pass 2 would let it through.
         stage('docker_scan') {
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    sh '''
-                        mkdir -p reports
-                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
-                            image --skip-version-check --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 0 \
-                            --format json --output reports/trivy-image.json "$IMAGE"
-                        gate=0
-                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
-                            image --skip-version-check --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
-                            --format table "$IMAGE" || gate=1
-                        docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
-                            image --skip-version-check --scanners secret --exit-code 1 \
-                            --format table "$IMAGE" || gate=1
-                        exit $gate
-                    '''
-                }
+                sh '''
+                    mkdir -p reports
+                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                        image --skip-version-check --scanners vuln,secret --secret-config trivy-secret.yaml --severity HIGH,CRITICAL --exit-code 0 --show-suppressed \
+                        --format json --output reports/trivy-image.json "$IMAGE"
+                    gate=0
+                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                        image --skip-version-check --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+                        --format table "$IMAGE" || gate=1
+                    docker run --rm --volumes-from jenkins -v trivy-cache:/root/.cache -w "$WORKSPACE" aquasec/trivy \
+                        image --skip-version-check --scanners secret --secret-config trivy-secret.yaml --exit-code 1 \
+                        --format table "$IMAGE" || gate=1
+                    exit $gate
+                '''
             }
         }
 
@@ -213,52 +219,79 @@ pipeline {
         // DAST stage so the two do not duplicate each other. Any FAIL makes the stage, and the build, fail.
         stage('security_smoke') {
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    sh '''
-                        fail=0
+                sh '''
+                    fail=0
 
-                        uid=$(docker exec "$WEB" id -u)
-                        if [ "$uid" = "0" ]; then
-                            echo "FAIL: the app runs as root"; fail=1
+                    uid=$(docker exec "$WEB" id -u)
+                    if [ "$uid" = "0" ]; then
+                        echo "FAIL: the app runs as root"; fail=1
+                    else
+                        echo "PASS: the app runs as a non-root user (uid $uid)"
+                    fi
+
+                    for p in .git/config package.json Dockerfile server.js config/env/all.js artifacts/cert/server.key .env; do
+                        code=$(docker exec "$WEB" sh -c "wget -S -O /dev/null http://localhost:4000/$p 2>&1 | grep 'HTTP/' | tail -n 1 | grep -o '[0-9][0-9][0-9]' | head -n 1")
+                        if [ "$code" = "404" ]; then
+                            echo "PASS: /$p is not exposed (404)"
                         else
-                            echo "PASS: the app runs as a non-root user (uid $uid)"
+                            echo "FAIL: /$p answered with status $code"; fail=1
                         fi
+                    done
 
-                        for p in .git/config package.json Dockerfile server.js config/env/all.js artifacts/cert/server.key .env; do
-                            code=$(docker exec "$WEB" sh -c "wget -S -O /dev/null http://localhost:4000/$p 2>&1 | grep 'HTTP/' | tail -n 1 | grep -o '[0-9][0-9][0-9]' | head -n 1")
-                            if [ "$code" = "404" ]; then
-                                echo "PASS: /$p is not exposed (404)"
-                            else
-                                echo "FAIL: /$p answered with status $code"; fail=1
-                            fi
-                        done
+                    if docker exec "$WEB" sh -c "echo x > /home/node/app/injected.txt" 2>/dev/null; then
+                        echo "FAIL: the application folder is writable"; fail=1
+                    else
+                        echo "PASS: the filesystem is read-only"
+                    fi
 
-                        if docker exec "$WEB" sh -c "echo x > /home/node/app/injected.txt" 2>/dev/null; then
-                            echo "FAIL: the application folder is writable"; fail=1
-                        else
-                            echo "PASS: the filesystem is read-only"
+                    caps=$(docker exec "$WEB" sh -c "grep CapEff /proc/1/status")
+                    case "$caps" in
+                        *0000000000000000) echo "PASS: the app process has no Linux capabilities" ;;
+                        *) echo "FAIL: the app process has capabilities ($caps)"; fail=1 ;;
+                    esac
+
+                    cookie=$(docker exec "$WEB" sh -c "wget -S -O /dev/null http://localhost:4000/login 2>&1 | grep -i set-cookie")
+                    case "$cookie" in
+                        *HttpOnly*) echo "PASS: the session cookie is HttpOnly" ;;
+                        *) echo "FAIL: the session cookie is not HttpOnly"; fail=1 ;;
+                    esac
+
+                    exit $fail
+                '''
+            }
+        }
+
+        // DEPLOYMENT, step 1: staging. The image that was scanned and passed the smoke checks is deployed as a long-running,
+        // hardened container (read-only, no capabilities, memory and process limits) with its own database, reachable at
+        // http://localhost:4001. Staging is the target of the dynamic scans below, as the brief asks (DAST on a staging environment).
+        // Each deployment replaces the previous one, so staging always runs the latest build.
+        stage('deploy_staging') {
+            steps {
+                sh '''
+                    set -e
+                    docker network inspect "$STG_NET" >/dev/null 2>&1 || docker network create "$STG_NET"
+                    docker rm -f "$STG" "$STG_MONGO" >/dev/null 2>&1 || true
+                    docker run -d --name "$STG_MONGO" --network "$STG_NET" --restart unless-stopped mongo:4.4
+                    docker run -d --name "$STG" --network "$STG_NET" -p 4001:4000 --restart unless-stopped \
+                        --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --memory 512m --pids-limit 256 \
+                        -e MONGODB_URI="mongodb://$STG_MONGO:27017/nodegoat" \
+                        "$IMAGE" sh -c "until nc -z -w 2 $STG_MONGO 27017; do sleep 2; done; node artifacts/db-reset.js && npm start"
+                    for i in $(seq 1 30); do
+                        if docker exec "$STG" wget -q -O /dev/null http://localhost:4000/login; then
+                            echo "DEPLOYED to staging: $IMAGE is answering on http://localhost:4001"
+                            exit 0
                         fi
-
-                        caps=$(docker exec "$WEB" sh -c "grep CapEff /proc/1/status")
-                        case "$caps" in
-                            *0000000000000000) echo "PASS: the app process has no Linux capabilities" ;;
-                            *) echo "FAIL: the app process has capabilities ($caps)"; fail=1 ;;
-                        esac
-
-                        cookie=$(docker exec "$WEB" sh -c "wget -S -O /dev/null http://localhost:4000/login 2>&1 | grep -i set-cookie")
-                        case "$cookie" in
-                            *HttpOnly*) echo "PASS: the session cookie is HttpOnly" ;;
-                            *) echo "FAIL: the session cookie is not HttpOnly"; fail=1 ;;
-                        esac
-
-                        exit $fail
-                    '''
-                }
+                        sleep 3
+                    done
+                    echo "Staging did not answer within 90 seconds"
+                    docker logs "$STG"
+                    exit 1
+                '''
             }
         }
 
         // Dynamic analysis (DAST): OWASP ZAP attacks the running app from outside, like a real attacker.
-        // It reuses the app and network started by the Smoke test, so it must stay after that stage.
+        // It attacks the staging deployment started by deploy_staging, so it must stay after that stage.
         // -m 1 caps the crawl at one minute (it usually ends sooner, once every page is visited) and -I keeps warnings
         // from failing the build; only the High-risk check below can fail it. Known limit: a passive crawl does not always
         // reach every page, so the High alert was missed in 1 of the first 4 runs.
@@ -267,23 +300,21 @@ pipeline {
         // fails the stage. Medium, Low and Informational alerts stay in the report and only warn.
         stage('dast') {
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    sh '''
-                        mkdir -p reports
-                        docker run --name "$ZAP" --network "$NET" --entrypoint sh zaproxy/zap-stable -c \
-                            "mkdir -p /zap/wrk && zap-baseline.py -t http://$WEB:4000 -m 1 -r zap.html -J zap.json -I"
-                        docker cp "$ZAP:/zap/wrk/zap.json" reports/zap.json
-                        docker cp "$ZAP:/zap/wrk/zap.html" reports/zap.html
+                sh '''
+                    mkdir -p reports
+                    docker run --name "$ZAP" --network "$STG_NET" --entrypoint sh zaproxy/zap-stable -c \
+                        "mkdir -p /zap/wrk && zap-baseline.py -t http://$STG:4000 -m 1 -r zap.html -J zap.json -I"
+                    docker cp "$ZAP:/zap/wrk/zap.json" reports/zap.json
+                    docker cp "$ZAP:/zap/wrk/zap.html" reports/zap.html
 
-                        highs=$(grep -o '"riskcode": *"3"' reports/zap.json | wc -l)
-                        echo "ZAP high-risk alerts: $highs"
-                        if [ "$highs" -gt 0 ]; then
-                            echo "Blocking alerts:"
-                            grep -B1 '"riskcode": *"3"' reports/zap.json | grep '"name"'
-                            exit 1
-                        fi
-                    '''
-                }
+                    highs=$(grep -o '"riskcode": *"3"' reports/zap.json | wc -l)
+                    echo "ZAP high-risk alerts: $highs"
+                    if [ "$highs" -gt 0 ]; then
+                        echo "Blocking alerts:"
+                        grep -B1 '"riskcode": *"3"' reports/zap.json | grep '"name"'
+                        exit 1
+                    fi
+                '''
             }
         }
 
@@ -303,25 +334,23 @@ pipeline {
         stage('pentest') {
             when { expression { return params.RUN_PENTEST } }
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    timeout(time: 40, unit: 'MINUTES') {
-                        sh '''
-                            mkdir -p reports
-                            docker rm -f "$ZAP" || true
-                            docker run --name "$ZAP" --network "$NET" --memory 4g --entrypoint sh zaproxy/zap-stable -c \
-                                "mkdir -p /zap/wrk && zap-full-scan.py -t http://$WEB:4000 -m 1 -r zap-full.html -J zap-full.json -I"
-                            docker cp "$ZAP:/zap/wrk/zap-full.json" reports/zap-full.json
-                            docker cp "$ZAP:/zap/wrk/zap-full.html" reports/zap-full.html
+                timeout(time: 40, unit: 'MINUTES') {
+                    sh '''
+                        mkdir -p reports
+                        docker rm -f "$ZAP" || true
+                        docker run --name "$ZAP" --network "$STG_NET" --memory 4g --entrypoint sh zaproxy/zap-stable -c \
+                            "mkdir -p /zap/wrk && zap-full-scan.py -t http://$STG:4000 -m 1 -r zap-full.html -J zap-full.json -I"
+                        docker cp "$ZAP:/zap/wrk/zap-full.json" reports/zap-full.json
+                        docker cp "$ZAP:/zap/wrk/zap-full.html" reports/zap-full.html
 
-                            highs=$(grep -o '"riskcode": *"3"' reports/zap-full.json | wc -l)
-                            echo "Pentest high-risk alerts: $highs"
-                            if [ "$highs" -gt 0 ]; then
-                                echo "Blocking alerts:"
-                                grep -B1 '"riskcode": *"3"' reports/zap-full.json | grep '"name"'
-                                exit 1
-                            fi
-                        '''
-                    }
+                        highs=$(grep -o '"riskcode": *"3"' reports/zap-full.json | wc -l)
+                        echo "Pentest high-risk alerts: $highs"
+                        if [ "$highs" -gt 0 ]; then
+                            echo "Blocking alerts:"
+                            grep -B1 '"riskcode": *"3"' reports/zap-full.json | grep '"name"'
+                            exit 1
+                        fi
+                    '''
                 }
             }
         }
@@ -336,7 +365,7 @@ pipeline {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
                     sh '''
                         mkdir -p reports
-                        docker logs "$WEB" > reports/app.log 2>&1
+                        docker logs "$STG" > reports/app.log 2>&1
                         failed=$(grep -c "attempt to login with invalid user" reports/app.log || true)
                         noauth=$(grep -c "redirecting to login" reports/app.log || true)
                         badsignup=$(grep -c "user did not validate" reports/app.log || true)
@@ -365,13 +394,49 @@ pipeline {
                         mkdir -p reports
                         docker logs "$FALCO" > reports/falco.log 2>&1
                         total=$(grep -c -E ": (Emergency|Alert|Critical|Error|Warning|Notice) " reports/falco.log || true)
-                        app=$(grep -c "$WEB" reports/falco.log || true)
+                        app=$(grep -c -E "$WEB|$STG" reports/falco.log || true)
                         echo "Falco alerts during the run, all containers: $total"
-                        echo "Falco alerts about the application container $WEB: $app"
+                        echo "Falco alerts about the application containers ($WEB, $STG): $app"
                         if [ "$app" -gt 0 ]; then
-                            grep "$WEB" reports/falco.log | cut -c1-250
+                            grep -E "$WEB|$STG" reports/falco.log | cut -c1-250
                         fi
                     '''
+                }
+            }
+        }
+
+        // DEPLOYMENT, step 2: production. It is reached only if every stage before it passed (a failed gate stops the pipeline earlier).
+        // As a safety net, it also checks that the build is still green: if a report-only stage failed, nothing is deployed, the stage is
+        // marked UNSTABLE (yellow) with a clear message, and production keeps running the last version that passed everything.
+        // Production uses the same hardened settings as staging, with its own database, on http://localhost:4002.
+        stage('deploy_production') {
+            steps {
+                script {
+                    if (currentBuild.currentResult == 'SUCCESS') {
+                        sh '''
+                            set -e
+                            docker network inspect "$PRD_NET" >/dev/null 2>&1 || docker network create "$PRD_NET"
+                            docker rm -f "$PRD" "$PRD_MONGO" >/dev/null 2>&1 || true
+                            docker run -d --name "$PRD_MONGO" --network "$PRD_NET" --restart unless-stopped mongo:4.4
+                            docker run -d --name "$PRD" --network "$PRD_NET" -p 4002:4000 --restart unless-stopped \
+                                --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --memory 512m --pids-limit 256 \
+                                -e MONGODB_URI="mongodb://$PRD_MONGO:27017/nodegoat" \
+                                "$IMAGE" sh -c "until nc -z -w 2 $PRD_MONGO 27017; do sleep 2; done; node artifacts/db-reset.js && npm start"
+                            for i in $(seq 1 30); do
+                                if docker exec "$PRD" wget -q -O /dev/null http://localhost:4000/login; then
+                                    echo "DEPLOYED to production: $IMAGE is answering on http://localhost:4002"
+                                    exit 0
+                                fi
+                                sleep 3
+                            done
+                            echo "Production did not answer within 90 seconds"
+                            docker logs "$PRD"
+                            exit 1
+                        '''
+                    } else {
+                        echo "RELEASE BLOCKED: at least one quality gate failed (result so far: ${currentBuild.currentResult}). Nothing was deployed to production."
+                        unstable('release blocked by the quality gates')
+                    }
                 }
             }
         }

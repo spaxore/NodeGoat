@@ -8,6 +8,8 @@ FROM node:12-alpine
 ENV USER node
 ENV WORKDIR /home/$USER/app
 WORKDIR $WORKDIR
+# Install the latest security patches of the Alpine system packages (the base image is old, so its libraries have known, fixed CVEs).
+RUN apk upgrade --no-cache
 COPY --from=0 /usr/src/app/node_modules node_modules
 RUN chown $USER:$USER $WORKDIR
 COPY --chown=node . $WORKDIR

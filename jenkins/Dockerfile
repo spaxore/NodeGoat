@@ -26,7 +26,8 @@ RUN jenkins-plugin-cli --plugins \
     credentials-binding \
     htmlpublisher \
     timestamper \
-    ansicolor
+    ansicolor \
+    github
 
 # Reports whether the Jenkins web interface answers (the login page is public). Takes effect the next time this image is rebuilt.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \

@@ -1,0 +1,28 @@
+# Accepted risks for the Trivy gates (scan_dependencies and docker_scan).
+# Procedure: docs/exemption-process.md. Each exemption has a reason, a compensating control, an owner, a decision date and an expiry (exp:).
+# Owner: spaxore. Decision date: 2026-11-14. Expiry and review: 2027-02-12 (90 days, the maximum for an accepted risk).
+# Type: accepted risk. The application is a training app that is only exposed on localhost; none of these are false positives of the tool.
+# These findings are not hidden: the scan reports still list them (reports/trivy-*.json, "suppressed" section).
+# The real fix is to upgrade the MongoDB driver and the Node.js base image (breaking changes), planned for the next iteration.
+# The gate stays active: any NEW critical vulnerability with a fix still blocks the build.
+
+# bson 1.0.9, pulled in by the MongoDB driver 2.2.36 (a runtime dependency).
+# Compensating control: the driver only parses data coming from the application's own MongoDB over an internal network. Fix: MongoDB driver 3.x.
+CVE-2020-7610 exp:2027-02-12
+
+# minimist (0.0.8, 0.0.10, 1.2.0 in the lock file; 1.2.5 in the image). In the lock file it comes through "forever" (a process manager the
+# app does not run: it starts with "node server.js") and in the image it appears to be the copy bundled inside the npm tool of the base image.
+# Compensating control: it only parses command-line arguments, which an attacker does not control here.
+CVE-2021-44906 exp:2027-02-12
+
+# fsevents 1.2.9: a macOS-only optional dependency (forever -> chokidar -> fsevents). It is in the lock file but is not installed
+# in the Linux image, so it never runs in the deployed application.
+CVE-2023-45311 exp:2027-02-12
+
+# tar 4.4.8 (lock file) and tar 4.4.19 (image): in the lock file it is part of the macOS-only fsevents chain; in the image it appears to be
+# the copy bundled inside the npm tool of the base image. Compensating control: the running application never extracts archives.
+CVE-2026-59873 exp:2027-02-12
+
+# form-data 2.3.2: appears in the image as part of the HTTP client bundled inside the npm tool of the base image (not part of the application code).
+# Compensating control: the application does not build multipart requests from attacker data.
+CVE-2025-7783 exp:2027-02-12

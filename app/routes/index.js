@@ -67,17 +67,15 @@ const index = (app, db) => {
     app.post("/memos", isLoggedIn, memosHandler.addMemos);
 
     // Handle redirect for learning resources link
+    // Fix for A10 unvalidated redirects, by indirect reference: the browser sends only a short name, never an address.
+    // The real destination is stored on the server, so nobody can choose where the user is sent.
+    const LEARNING_RESOURCES = {
+        "finance-basics": "https://www.khanacademy.org/economics-finance-domain/core-finance/investment-vehicles-tutorial/ira-401ks/v/traditional-iras"
+    };
     app.get("/learn", isLoggedIn, (req, res) => {
-        // Fix for A10 unvalidated redirects: only the trusted learning site (allow list) is accepted.
-        // Any other address, or text that is not a valid URL, sends the user back to the dashboard.
-        let target;
-        try {
-            target = new URL(req.query.url);
-        } catch (err) {
-            return res.redirect("/dashboard");
-        }
-        if (target.protocol === "https:" && target.hostname === "www.khanacademy.org") {
-            return res.redirect(target.toString());
+        const name = req.query.resource;
+        if (typeof name === "string" && Object.prototype.hasOwnProperty.call(LEARNING_RESOURCES, name)) {
+            return res.redirect(LEARNING_RESOURCES[name]);
         }
         return res.redirect("/dashboard");
     });

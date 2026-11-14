@@ -43,6 +43,12 @@ def trivy_findings(report):
     return vulns, secrets
 
 
+def exempt_note(report):
+    """Text added to a gate line when .trivyignore suppressed findings (accepted risks), so exemptions stay visible."""
+    n = sum(len(r.get("ExperimentalModifiedFindings") or []) for r in report.get("Results", []))
+    return f", {n} exempted (accepted risks)" if n else ""
+
+
 def zap_alerts(report):
     alerts = []
     for site in report.get("site", []):
@@ -88,7 +94,7 @@ if deps is not None:
     crit_fix = [v for v in crit if v.get("FixedVersion")]
     metrics["deps_critical_fix"] = len(crit_fix)
     add_gate("scan_dependencies", "CRITICAL with a fix blocks",
-             f"{len(crit_fix)} critical with fix ({len(crit)} critical, {len(vulns)} in total)", len(crit_fix) > 0)
+             f"{len(crit_fix)} critical with fix ({len(crit)} critical, {len(vulns)} in total){exempt_note(deps)}", len(crit_fix) > 0)
     add_details("Critical dependency vulnerabilities (Trivy)", ["CVE", "Package", "Installed", "Fixed in"],
                 [[v["VulnerabilityID"], v["PkgName"], v["InstalledVersion"], v.get("FixedVersion", "no fix")] for v in crit])
 
@@ -112,7 +118,7 @@ if image is not None:
     crit_fix = [v for v in crit if v.get("FixedVersion")]
     metrics["image_critical_fix"], metrics["image_secrets"] = len(crit_fix), len(secrets)
     add_gate("docker_scan", "CRITICAL with a fix, or any secret, blocks",
-             f"{len(crit_fix)} critical with fix, {len(secrets)} secret(s), {len(vulns)} vulnerabilities in total",
+             f"{len(crit_fix)} critical with fix, {len(secrets)} secret(s), {len(vulns)} vulnerabilities in total{exempt_note(image)}",
              len(crit_fix) > 0 or len(secrets) > 0)
 
 # dast and pentest: ZAP, any High alert blocks. The pentest report only exists when RUN_PENTEST was ticked.
