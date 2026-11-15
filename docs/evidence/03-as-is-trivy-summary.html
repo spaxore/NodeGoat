@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>As-is image scan summary (Trivy) - NodeGoat</title>
+<style>
+  body{font-family:Segoe UI,Arial,sans-serif;margin:28px;color:#1a1a1a;max-width:980px}
+  h1{font-size:22px;margin:0 0 4px} h2{font-size:15px;margin:22px 0 6px}
+  p{margin:4px 0;color:#444;font-size:14px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}
+  th{background:#222;color:#fff}
+  .tiles{display:flex;gap:12px;margin:14px 0}
+  .tile{border:1px solid #ccc;padding:10px 18px;min-width:110px}
+  .tile b{display:block;font-size:26px}
+  .crit b{color:#b00020}
+</style></head><body>
+<h1>As-is image scan summary (Trivy) - NodeGoat</h1>
+<p>Image: nodegoat-web &middot; Scanner: Trivy &middot; Filter: HIGH and CRITICAL only</p>
+<div class="tiles">
+  <div class="tile crit"><b>14</b>Critical</div>
+  <div class="tile"><b>76</b>High</div>
+  <div class="tile"><b>90</b>Total</div>
+  <div class="tile"><b>88</b>Have a fix</div>
+</div>
+<h2>By layer</h2>
+<table><tr><th>Target</th><th>Critical</th><th>High</th><th>Total</th></tr><tr><td>nodegoat-web (alpine 3.15.4)</td><td>1</td><td>8</td><td>9</td></tr><tr><td>Node.js</td><td>13</td><td>68</td><td>81</td></tr></table>
+<h2>Top 10 critical vulnerabilities</h2>
+<table><tr><th>CVE</th><th>Package</th><th>Installed</th><th>Fixed in</th></tr><tr><td>CVE-2022-37434</td><td>zlib</td><td>1.2.12-r0</td><td>1.2.12-r2</td></tr><tr><td>CVE-2020-7610</td><td>bson</td><td>1.0.9</td><td>1.1.4</td></tr><tr><td>CVE-2025-7783</td><td>form-data</td><td>2.3.2</td><td>2.5.4, 3.0.4, 4.0.4</td></tr><tr><td>CVE-2021-44906</td><td>minimist</td><td>0.0.10</td><td>1.2.6, 0.2.4</td></tr><tr><td>CVE-2021-44906</td><td>minimist</td><td>0.0.8</td><td>1.2.6, 0.2.4</td></tr><tr><td>CVE-2021-44906</td><td>minimist</td><td>1.2.5</td><td>1.2.6, 0.2.4</td></tr><tr><td>CVE-2021-44906</td><td>minimist</td><td>1.2.5</td><td>1.2.6, 0.2.4</td></tr><tr><td>CVE-2021-44906</td><td>minimist</td><td>1.2.5</td><td>1.2.6, 0.2.4</td></tr><tr><td>CVE-2019-10746</td><td>mixin-deep</td><td>1.3.1</td><td>1.3.2, 2.0.1</td></tr><tr><td>CVE-2026-90711</td><td>proxy-addr</td><td>2.0.4</td><td>2.0.8</td></tr></table>
+<h2>Most affected packages</h2><p>brace-expansion (10), tar (9), minimatch (8), kind-of (6), minimist (5), libcrypto1.1 (4)</p>
+<h2>Secrets found in the image</h2><p>Asymmetric Private Key in /home/node/app/artifacts/cert/server.key</p>
+<p style="margin-top:14px;color:#777">Note: Alpine 3.15 is end-of-life, so OS results may be incomplete.</p>
+</body></html>

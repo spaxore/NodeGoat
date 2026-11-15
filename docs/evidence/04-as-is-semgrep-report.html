@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>As-is SAST report (Semgrep) - NodeGoat</title>
+<style>
+  body{font-family:Segoe UI,Arial,sans-serif;margin:32px;color:#1a1a1a}
+  h1{font-size:22px;margin:0 0 4px} p{margin:4px 0 20px;color:#555}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{border:1px solid #ccc;padding:8px;text-align:left;vertical-align:top}
+  th{background:#222;color:#fff}
+  td:first-child{font-weight:600}
+</style></head><body>
+<h1>As-is SAST report (Semgrep) - NodeGoat</h1>
+<p>10 findings in 3 files &middot; 3 ERROR, 7 WARNING &middot; Semgrep 1.173.0, ruleset p/javascript</p>
+<table><tr><th>Severity</th><th>Location</th><th>Rule</th><th>Description</th></tr>
+  <tr>
+    <td>ERROR</td>
+    <td>app/routes/contributions.js:32</td>
+    <td>code-string-concat</td>
+    <td>Found data from an Express or Next web request flowing to `eval`. If this data is user-controllable this can lead to execution of arbitrary system commands in the context of your application process. Avoid `eval` whenever possible.</td>
+  </tr>
+  <tr>
+    <td>ERROR</td>
+    <td>app/routes/contributions.js:33</td>
+    <td>code-string-concat</td>
+    <td>Found data from an Express or Next web request flowing to `eval`. If this data is user-controllable this can lead to execution of arbitrary system commands in the context of your application process. Avoid `eval` whenever possible.</td>
+  </tr>
+  <tr>
+    <td>ERROR</td>
+    <td>app/routes/contributions.js:34</td>
+    <td>code-string-concat</td>
+    <td>Found data from an Express or Next web request flowing to `eval`. If this data is user-controllable this can lead to execution of arbitrary system commands in the context of your application process. Avoid `eval` whenever possible.</td>
+  </tr>
+  <tr>
+    <td>WARNING</td>
+    <td>app/routes/index.js:72</td>
+    <td>express-open-redirect</td>
+    <td>The application redirects to a URL specified by user-supplied input `req` that is not validated. This could redirect users to malicious locations. Consider using an allow-list approach to validate URLs, or warn users they are being redirected to a third-party website.</td>
+  </tr>
+  <tr>
+    <td>WARNING</td>
+    <td>server.js:78</td>
+    <td>express-cookie-session-default-name</td>
+    <td>Don’t use the default session cookie name Using the default session cookie name can open your app to attacks. The security issue posed is similar to X-Powered-By: a potential attacker can use it to fingerprint the server and target attacks accordingly.</td>
+  </tr>
+  <tr>
+    <td>WARNING</td>
+    <td>server.js:78</td>
+    <td>express-cookie-session-no-domain</td>
+    <td>Default session middleware settings: `domain` not set. It indicates the domain of the cookie; use it to compare against the domain of the server in which the URL is being requested. If they match, then check the path attribute next.</td>
+  </tr>
+  <tr>
+    <td>WARNING</td>
+    <td>server.js:78</td>
+    <td>express-cookie-session-no-expires</td>
+    <td>Default session middleware settings: `expires` not set. Use it to set expiration date for persistent cookies.</td>
+  </tr>
+  <tr>
+    <td>WARNING</td>
+    <td>server.js:78</td>
+    <td>express-cookie-session-no-httponly</td>
+    <td>Default session middleware settings: `httpOnly` not set. It ensures the cookie is sent only over HTTP(S), not client JavaScript, helping to protect against cross-site scripting attacks.</td>
+  </tr>
+  <tr>
+    <td>WARNING</td>
+    <td>server.js:78</td>
+    <td>express-cookie-session-no-path</td>
+    <td>Default session middleware settings: `path` not set. It indicates the path of the cookie; use it to compare against the request path. If this and domain match, then send the cookie in the request.</td>
+  </tr>
+  <tr>
+    <td>WARNING</td>
+    <td>server.js:78</td>
+    <td>express-cookie-session-no-secure</td>
+    <td>Default session middleware settings: `secure` not set. It ensures the browser only sends the cookie over HTTPS.</td>
+  </tr></table>
+</body></html>
