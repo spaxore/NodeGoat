@@ -27,11 +27,9 @@ function ContributionsHandler(db) {
 
     this.handleContributionsUpdate = (req, res, next) => {
 
-        // Fix for A1-1 server-side JavaScript injection: the inputs are converted with parseInt instead of eval,
-        // so text sent by the user is never executed as code. Non-numeric input gives NaN and is rejected below.
-        const preTax = parseInt(req.body.preTax, 10);
-        const afterTax = parseInt(req.body.afterTax, 10);
-        const roth = parseInt(req.body.roth, 10);
+        const preTax = eval(req.body.preTax);
+        const afterTax = eval(req.body.afterTax);
+        const roth = eval(req.body.roth);
 
         const {
             userId
