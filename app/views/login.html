@@ -143,7 +143,7 @@
     <script src="/vendor/bootstrap/bootstrap.js"></script>
     <!-- Load environmental scripts such as live reload -->
     {% for script in environmentalScripts %}
-    {{script}}
+    {{script | safe}}
     {% endfor %}
     <script type="application/javascript">
     const areCookiesEnabled = () => {

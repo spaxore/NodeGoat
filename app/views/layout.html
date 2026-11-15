@@ -123,7 +123,7 @@
 
     <!-- Load environmental scripts such as live reload -->
     {% for script in environmentalScripts %}
-    {{script}}
+    {{script | safe}}
     {% endfor %}
 
 </body>
